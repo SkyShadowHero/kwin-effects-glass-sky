@@ -98,6 +98,11 @@ void BlurSettings::read()
     refraction.physicallyBased = BlurConfig::physicallyBasedRefraction();
     general.cacheWallpaperBlur = BlurConfig::cacheWallpaperBlur();
     general.wallpaperCacheRefresh = BlurConfig::wallpaperCacheRefresh();
+    general.cacheExcludeDocks = BlurConfig::cacheExcludeDocks();
+    general.cacheExcludeDecorations = BlurConfig::cacheExcludeDecorations();
+    general.cacheExcludeTooltips = BlurConfig::cacheExcludeTooltips();
+    general.cacheExcludeMenus = BlurConfig::cacheExcludeMenus();
+    general.cacheExcludeNotificationsAndOSD = BlurConfig::cacheExcludeNotificationsAndOSD();
 }
 
 }

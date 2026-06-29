@@ -42,6 +42,11 @@ struct GeneralSettings
     bool excludeOSD;
     bool cacheWallpaperBlur = false;
     int wallpaperCacheRefresh = 60;
+    bool cacheExcludeDocks = false;
+    bool cacheExcludeDecorations = false;
+    bool cacheExcludeTooltips = false;
+    bool cacheExcludeMenus = false;
+    bool cacheExcludeNotificationsAndOSD = false;
 };
 
 struct ForceBlurSettings

@@ -1254,8 +1254,29 @@ void BlurEffect::blur(const RenderTarget &renderTarget, const RenderViewport &vi
         }
     }
 
+    // Determine if wallpaper cache should be skipped for this window type
+    auto shouldSkipCache = [&]() -> bool {
+        if (m_settings.general.cacheExcludeDocks && w->isDock()) {
+            return true;
+        }
+        if (m_settings.general.cacheExcludeTooltips && w->isTooltip()) {
+            return true;
+        }
+        if (m_settings.general.cacheExcludeNotificationsAndOSD && (w->isNotification() || w->isOnScreenDisplay())) {
+            return true;
+        }
+        if (m_settings.general.cacheExcludeMenus && !w->isTooltip() &&
+                (w->isMenu() || w->isDropdownMenu() || w->isPopupMenu() || w->isPopupWindow())) {
+            return true;
+        }
+        if (m_settings.general.cacheExcludeDecorations && blurInfo.frame.has_value() && !blurInfo.content.has_value()) {
+            return true;
+        }
+        return false;
+    };
+
     // Fetch the pixels behind the shape that is going to be blurred.
-    if (m_settings.general.cacheWallpaperBlur && m_desktopWindow) {
+    if (m_settings.general.cacheWallpaperBlur && m_desktopWindow && !shouldSkipCache()) {
         if (m_wallpaperCacheDirty || !m_wallpaperCache) {
             rebuildWallpaperCache();
             if (!m_wallpaperCache) {
