@@ -335,7 +335,9 @@ void BlurEffect::initBlurStrengthValues()
 void BlurEffect::reconfigure(ReconfigureFlags flags)
 {
     m_settings.read();
-    m_wallpaperCacheDirty = true;
+    for (auto &[output, entry] : m_wallpaperCaches) {
+        entry->dirty = true;
+    }
 
     m_contentBlurSettings = pipelineSettingsForStrength(
         m_settings.general.blurStrength,
@@ -508,8 +510,15 @@ void BlurEffect::updateBlurRegion(EffectWindow *w)
 void BlurEffect::slotWindowAdded(EffectWindow *w)
 {
     if (w->isDesktop()) {
-        m_desktopWindow = w;
-        m_wallpaperCacheDirty = true;
+        auto *output = w->screen();
+        if (output) {
+            auto &entryPtr = m_wallpaperCaches[output];
+            if (!entryPtr) {
+                entryPtr = std::make_unique<WallpaperCacheEntry>();
+            }
+            entryPtr->desktopWindow = w;
+            entryPtr->dirty = true;
+        }
     }
 
     SurfaceInterface *surf = w->surface();
@@ -552,9 +561,12 @@ void BlurEffect::slotWindowAdded(EffectWindow *w)
 
 void BlurEffect::slotWindowDeleted(EffectWindow *w)
 {
-    if (w == m_desktopWindow) {
-        m_desktopWindow = nullptr;
-        m_wallpaperCacheDirty = true;
+    for (auto it = m_wallpaperCaches.begin(); it != m_wallpaperCaches.end(); ) {
+        if (it->second && it->second->desktopWindow == w) {
+            it = m_wallpaperCaches.erase(it);
+        } else {
+            ++it;
+        }
     }
 
     if (auto it = m_windows.find(w); it != m_windows.end()) {
@@ -909,12 +921,14 @@ void BlurEffect::prePaintScreen(ScreenPrePaintData &data, std::chrono::milliseco
     effects->prePaintScreen(data, presentTime);
 #endif
 
-    if (m_settings.general.cacheWallpaperBlur && m_desktopWindow) {
+    if (m_settings.general.cacheWallpaperBlur && !m_wallpaperCaches.empty()) {
         const int interval = m_settings.general.wallpaperCacheRefresh;
         if (interval > 0) {
             static int s_frameCounter = 0;
             if (++s_frameCounter % interval == 0) {
-                m_wallpaperCacheDirty = true;
+                for (auto &[output, entry] : m_wallpaperCaches) {
+                    entry->dirty = true;
+                }
             }
         }
     }
@@ -1276,25 +1290,35 @@ void BlurEffect::blur(const RenderTarget &renderTarget, const RenderViewport &vi
     };
 
     // Fetch the pixels behind the shape that is going to be blurred.
-    if (m_settings.general.cacheWallpaperBlur && m_desktopWindow && !shouldSkipCache()) {
-        if (m_wallpaperCacheDirty || !m_wallpaperCache) {
-            rebuildWallpaperCache();
-            if (!m_wallpaperCache) {
-                m_wallpaperCacheDirty = false;
-            }
+    // Try wallpaper cache path: sample from pre-rendered desktop wallpaper texture
+    // instead of reading back from the screen (Windows Acrylic style).
+    auto *output = w->screen();
+    auto cacheIt = output ? m_wallpaperCaches.find(output) : m_wallpaperCaches.end();
+    const bool useCache = m_settings.general.cacheWallpaperBlur
+        && cacheIt != m_wallpaperCaches.end()
+        && cacheIt->second
+        && cacheIt->second->desktopWindow
+        && !shouldSkipCache();
+
+    if (useCache) {
+        auto &entry = *cacheIt->second;
+        if (entry.dirty || !entry.texture) {
+            rebuildWallpaperCache(output);
         }
-        if (m_wallpaperCache && !m_wallpaperCacheSize.isEmpty()) {
+        if (entry.texture && !entry.size.isEmpty()) {
             // Copy from wallpaper cache into framebuffers[0].
+            // UV coordinates are relative to this screen's desktop origin.
+            const QPoint desktopOrigin = entry.desktopWindow->frameGeometry().topLeft().toPoint();
             GLVertexBuffer *cacheVbo = GLVertexBuffer::streamingBuffer();
             cacheVbo->reset();
             cacheVbo->setAttribLayout(std::span(GLVertexBuffer::GLVertex2DLayout), sizeof(GLVertex2D));
             if (auto result = cacheVbo->map<GLVertex2D>(6)) {
                 auto map = *result;
                 const QRectF localRect = QRectF(0, 0, backgroundRect.width(), backgroundRect.height());
-                const float u0 = (float)backgroundRect.left() / (float)m_wallpaperCacheSize.width();
-                const float v0 = 1.0f - (float)backgroundRect.top() / (float)m_wallpaperCacheSize.height();
-                const float u1 = (float)backgroundRect.right() / (float)m_wallpaperCacheSize.width();
-                const float v1 = 1.0f - (float)backgroundRect.bottom() / (float)m_wallpaperCacheSize.height();
+                const float u0 = (float)(backgroundRect.left() - desktopOrigin.x()) / (float)entry.size.width();
+                const float v0 = 1.0f - (float)(backgroundRect.top() - desktopOrigin.y()) / (float)entry.size.height();
+                const float u1 = (float)(backgroundRect.right() - desktopOrigin.x()) / (float)entry.size.width();
+                const float v1 = 1.0f - (float)(backgroundRect.bottom() - desktopOrigin.y()) / (float)entry.size.height();
                 map[0] = GLVertex2D{QVector2D(localRect.left(), localRect.top()), QVector2D(u0, v0)};
                 map[1] = GLVertex2D{QVector2D(localRect.right(), localRect.bottom()), QVector2D(u1, v1)};
                 map[2] = GLVertex2D{QVector2D(localRect.left(), localRect.bottom()), QVector2D(u0, v1)};
@@ -1309,10 +1333,10 @@ void BlurEffect::blur(const RenderTarget &renderTarget, const RenderViewport &vi
             proj.ortho(QRectF(0, 0, backgroundRect.width(), backgroundRect.height()));
             m_downsamplePass.shader->setUniform(m_downsamplePass.mvpMatrixLocation, proj);
             m_downsamplePass.shader->setUniform(m_downsamplePass.offsetLocation, 0.0f);
-            const QVector2D hp(0.5f / m_wallpaperCacheSize.width(), 0.5f / m_wallpaperCacheSize.height());
+            const QVector2D hp(0.5f / entry.size.width(), 0.5f / entry.size.height());
             m_downsamplePass.shader->setUniform(m_downsamplePass.halfpixelLocation, hp);
             glActiveTexture(GL_TEXTURE0);
-            m_wallpaperCache->bind();
+            entry.texture->bind();
 #ifdef GLASS_X11
             GLFramebuffer::pushFramebuffer(renderInfo.framebuffers[0].get());
 #else
@@ -1797,27 +1821,30 @@ bool BlurEffect::shouldFlattenCorner(KWin::EffectWindow *w, Qt::Corner corner) c
     return false;
 }
 
-void BlurEffect::rebuildWallpaperCache()
+void BlurEffect::rebuildWallpaperCache(LogicalOutput *output)
 {
-    if (!m_desktopWindow || !m_settings.general.cacheWallpaperBlur) {
+    auto it = m_wallpaperCaches.find(output);
+    if (it == m_wallpaperCaches.end() || !it->second
+        || !it->second->desktopWindow || !m_settings.general.cacheWallpaperBlur) {
         return;
     }
+    auto &entry = *it->second;
     effects->makeOpenGLContextCurrent();
 
-    const QRect desktopGeo = m_desktopWindow->frameGeometry().toRect();
+    const QRect desktopGeo = entry.desktopWindow->frameGeometry().toRect();
     if (desktopGeo.isEmpty()) {
         return;
     }
 
     // Allocate cache texture at full desktop resolution
-    if (!m_wallpaperCache || m_wallpaperCacheSize != desktopGeo.size()) {
-        m_wallpaperCache = GLTexture::allocate(GL_RGBA8, desktopGeo.size());
-        if (!m_wallpaperCache) {
+    if (!entry.texture || entry.size != desktopGeo.size()) {
+        entry.texture = GLTexture::allocate(GL_RGBA8, desktopGeo.size());
+        if (!entry.texture) {
             return;
         }
-        m_wallpaperCache->setFilter(GL_LINEAR);
-        m_wallpaperCache->setWrapMode(GL_CLAMP_TO_EDGE);
-        m_wallpaperCacheSize = desktopGeo.size();
+        entry.texture->setFilter(GL_LINEAR);
+        entry.texture->setWrapMode(GL_CLAMP_TO_EDGE);
+        entry.size = desktopGeo.size();
     }
 
     // Render desktop window to offscreen framebuffer
@@ -1840,7 +1867,7 @@ void BlurEffect::rebuildWallpaperCache()
         RenderTarget offscreenRt(desktopFb.get());
         RenderViewport offscreenVp(RectF(desktopGeo), 1.0, offscreenRt, QPoint(0, 0));
         WindowPaintData desktopData;
-        effects->renderWindow(offscreenRt, offscreenVp, m_desktopWindow,
+        effects->renderWindow(offscreenRt, offscreenVp, entry.desktopWindow,
                               PAINT_WINDOW_TRANSFORMED,
                               Region::infinite(),
                               desktopData);
@@ -1854,7 +1881,7 @@ void BlurEffect::rebuildWallpaperCache()
 
     // Copy to wallpaper cache via blit
     {
-        GLFramebuffer cacheFb(m_wallpaperCache.get());
+        GLFramebuffer cacheFb(entry.texture.get());
         if (cacheFb.valid()) {
             glBindFramebuffer(GL_READ_FRAMEBUFFER, desktopFb->handle());
             glBindFramebuffer(GL_DRAW_FRAMEBUFFER, cacheFb.handle());
@@ -1866,7 +1893,7 @@ void BlurEffect::rebuildWallpaperCache()
         }
     }
 
-    m_wallpaperCacheDirty = false;
+    entry.dirty = false;
 }
 
 } // namespace KWin

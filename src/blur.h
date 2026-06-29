@@ -18,6 +18,8 @@
 #include <QList>
 #include <QStringList>
 
+#include <map>
+#include <memory>
 #include <unordered_map>
 #include <Plasma/plasma_version.h>
 
@@ -88,7 +90,7 @@ public:
     static bool enabledByDefault();
 
     void reconfigure(ReconfigureFlags flags) override;
-    void rebuildWallpaperCache();
+    void rebuildWallpaperCache(LogicalOutput *output);
 #ifdef GLASS_KWIN_67
     void prePaintScreen(ScreenPrePaintData &data) override;
 
@@ -154,6 +156,14 @@ private:
     GLTexture *ensureNoiseTexture(int noiseStrength);
     QMatrix4x4 colorMatrix(const float &brightness, const float &saturation, const float &contrast) const;
     BlurPipelineSettings pipelineSettingsForStrength(int blurStrength, int noiseStrength) const;
+
+    struct WallpaperCacheEntry
+    {
+        EffectWindow *desktopWindow = nullptr;
+        std::unique_ptr<GLTexture> texture;
+        QSize size;
+        bool dirty = true;
+    };
 
 private:
     struct
@@ -269,11 +279,7 @@ private:
     static QTimer *s_contrastManagerRemoveTimer;
 #endif
 
-    std::unique_ptr<GLTexture> m_wallpaperCache;
-    QSize m_wallpaperCacheSize;
-    bool m_wallpaperCacheDirty = true;
-    EffectWindow *m_desktopWindow = nullptr;
-    uint32_t m_wallpaperHash = 0;
+    std::map<LogicalOutput *, std::unique_ptr<WallpaperCacheEntry>> m_wallpaperCaches;
 };
 
 inline bool BlurEffect::provides(Effect::Feature feature)
