@@ -88,6 +88,7 @@ public:
     static bool enabledByDefault();
 
     void reconfigure(ReconfigureFlags flags) override;
+    void rebuildWallpaperCache();
 #ifdef GLASS_KWIN_67
     void prePaintScreen(ScreenPrePaintData &data) override;
 
@@ -267,6 +268,12 @@ private:
     static ContrastManagerInterface *s_contrastManager;
     static QTimer *s_contrastManagerRemoveTimer;
 #endif
+
+    std::unique_ptr<GLTexture> m_wallpaperCache;
+    QSize m_wallpaperCacheSize;
+    bool m_wallpaperCacheDirty = true;
+    EffectWindow *m_desktopWindow = nullptr;
+    uint32_t m_wallpaperHash = 0;
 };
 
 inline bool BlurEffect::provides(Effect::Feature feature)

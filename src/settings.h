@@ -40,6 +40,8 @@ struct GeneralSettings
     bool excludeTooltips;
     bool excludeMenus;
     bool excludeOSD;
+    bool cacheWallpaperBlur = false;
+    int wallpaperCacheRefresh = 60;
 };
 
 struct ForceBlurSettings

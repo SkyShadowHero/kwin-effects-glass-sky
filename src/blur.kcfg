@@ -172,5 +172,11 @@ class3</default>
         <entry name="PhysicallyBasedRefraction" type="Bool">
             <default>false</default>
         </entry>
+        <entry name="CacheWallpaperBlur" type="Bool">
+            <default>false</default>
+        </entry>
+        <entry name="WallpaperCacheRefresh" type="Int">
+            <default>60</default>
+        </entry>
     </group>
 </kcfg>

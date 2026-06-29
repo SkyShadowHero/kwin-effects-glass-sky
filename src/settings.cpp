@@ -96,6 +96,8 @@ void BlurSettings::read()
     refraction.refractionOffsetStrength = BlurConfig::refractionOffsetStrength() / 2.0;
     refraction.refractionBevelIntensity = BlurConfig::refractionBevelIntensity() / 10.0;
     refraction.physicallyBased = BlurConfig::physicallyBasedRefraction();
+    general.cacheWallpaperBlur = BlurConfig::cacheWallpaperBlur();
+    general.wallpaperCacheRefresh = BlurConfig::wallpaperCacheRefresh();
 }
 
 }
